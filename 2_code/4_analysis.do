@@ -120,9 +120,17 @@ gen divstop = 0 if dvc != . & L1.dvc != .
 replace divstop = 1 if dvc == 0 & L1.dvc > 0 & divstop != .
 
 
+*** identify increases in NOL balance in or after 2017
+*** calculate cumulative sum, and scale by end-of-period NOL
+gen d_tlcf = D1.tlcf
+bysort gvkey: gen d_tlcf_cum_post = sum(d_tlcf) if d_tlcf != . & inrange(fyear, 2018, 2023)
+gen share_indefinite = d_tlcf_cum_post / tlcf
+replace share_indefinite = . if share_indefinite < 0 | share_indefinite > 1
+
+
 *** sample selection
 ** Dhaliwal timeframe: 1993-2008
-keep if inrange(fyear, 1993, 2023)
+keep if inrange(fyear, 2012, 2023)
 // keep if inrange(fyear, 2008, 2023)
 ** drop if not incorporated in the US
 keep if hfic == "USA"
@@ -135,12 +143,18 @@ foreach i of num 49 60/69 {
 ** drop if no loss observation
 // keep if loss == 1
 ** drop if variables are missing
-foreach var of varlist bn gn_va gn_ti earnings F1_earnings cashflow d_earnings negspiw negnop negglis negglcf salesgrowth age rd firstloss lossseq bigloss size divdum divstop {
+foreach var of varlist dta_ratio earnings F1_earnings cashflow d_earnings negspiw negnop negglis negglcf salesgrowth age rd firstloss lossseq bigloss size divdum divstop {
 	drop if `var' == .
 }
 
+count if loss == 1
+count if loss == 0
+
+
 *** winsorize
-winsor2 earnings F1_earnings F2_earnings F3_earnings cashflow salesgrowth d_dta_ratio d_va d_earnings rd, cuts (2 98) replace
+winsor2 d_earnings rd, cuts(0 99) replace
+winsor2 earnings F1_earnings F2_earnings F3_earnings cashflow salesgrowth, cuts (1 99) replace
+
 
 *** label variables for esttab
 label var earnings "Earnings"
@@ -150,10 +164,10 @@ label var ln_va "ln(VA)"
 label var dta_ratio "\%VA"
 label var cashflow "Cashflow"
 label var d_earnings "|\$\Delta\$Earnings|"
-// label var negspiw "Negspiw"
-// label var negnop "Negnop"
-// label var negglis "Negglis"
-// label var negglcf "Negglcf"
+label var negspiw "Negspiw"
+label var negnop "Negnop"
+label var negglis "Negglis"
+label var negglcf "Negglcf"
 label var salesgrowth "Salesgrowth"
 label var age "Age"
 label var rd "R\&D"
@@ -161,72 +175,68 @@ label var lossseq "Losseq"
 label var size "Size"
 
 *** descriptive stats
-estpost tabstat d_va ln_va dta_ratio earnings F1_earnings, c(stat) stat(n mean sd p1 p25 median p75 p99)
+** loss observations
+qui count if dta_ratio == 0 & loss == 1
+local count_zero = r(N)
+
+estpost tabstat dta_ratio earnings F1_earnings  if loss == 1, c(stat) stat(n mean sd p1 p25 median p75 p99)
 
 #delimit ;
-esttab using "3_pipeline/1_intermediate/descriptives.tex",
+esttab using "3_pipeline/1_intermediate/descriptives_loss.tex",
 	cell((count(label("{N}")) mean(label("{Mean}") fmt(%9.3f)) sd(label("{SD}") fmt(%9.3f)) p1(label("{P1}") fmt(%9.3f)) p25(label("{P25}") fmt(%9.3f)) p50(label("{P50}") fmt(%9.3f)) p75(label("{P75}") fmt(%9.3f)) p99(label("{P99}") fmt(%9.3f))))
+	refcat(dta_ratio "$\textnormal{\%VA} = 0$", label(`count_zero') below)
 	replace
 	booktabs
 	nonumber
 	noobs
-	nomtitle
+	collabels(none)
 	label
 	substitute("\_" "_")
 ;
 #delimit cr
 
-*** define controls
-global controls c.cashflow c.d_earnings i.negspiw i.negnop i.negglis i.negglcf c.salesgrowth c.age c.rd i.firstloss c.lossseq i.bigloss c.size i.divdum i.divstop
+** profit observations
+qui count if dta_ratio == 0 & loss == 0
+local count_zero = r(N)
 
+estpost tabstat dta_ratio earnings F1_earnings if loss == 0, c(stat) stat(n mean sd p1 p25 median p75 p99)
 
-*** regressions
-** earnings persistence: LOSS FIRMS
-reghdfe F1_earnings c.earnings##(i.taxcatg) $controls if loss == 1, absorb(fyear sic_group) cluster(gvkey fyear)
-// matrix list e(b) 
-estimates store model1
-reghdfe F1_earnings c.earnings##(c.d_va) $controls if loss == 1, absorb(fyear sic_group) cluster(gvkey fyear)
-estimates store model2
-reghdfe F1_earnings c.earnings##(c.ln_va) $controls if loss == 1, absorb(fyear sic_group) cluster(gvkey fyear)
-estimates store model3
-reghdfe F1_earnings c.earnings##(c.dta_ratio) $controls if  loss == 1, absorb(fyear sic_group) cluster(gvkey fyear)
-estimates store model4
-
-// estfe model*, labels(fyear "Year FE" sic_group "Industry FE")
 #delimit ;
-esttab model* using "3_pipeline/1_intermediate/results_earnings_persistence_loss_firms.tex",
-	b(3)
-	se(2)
-	indicate(`r(indicate_fe)')
-	abs
-	noconstant
-	booktabs
+esttab using "3_pipeline/1_intermediate/descriptives_profit.tex",
+	cell((count(label("{N}")) mean(label("{Mean}") fmt(%9.3f)) sd(label("{SD}") fmt(%9.3f)) p1(label("{P1}") fmt(%9.3f)) p25(label("{P25}") fmt(%9.3f)) p50(label("{P50}") fmt(%9.3f)) p75(label("{P75}") fmt(%9.3f)) p99(label("{P99}") fmt(%9.3f))))
+	refcat(dta_ratio "$\textnormal{\%VA} = 0$", label(`count_zero') below)
 	replace
-	nobaselevels
-	nogaps
-	star(* 0.10 ** 0.05 *** 0.01)
+	booktabs
+	nonumber
+	noobs
+	collabels(none)
 	label
-	se
-	coeflabel(1.taxcatg "GN_VA" 2.taxcatg "GN_TI" 1.taxcatg#c.earnings "Earnings $\times$ GN_VA" 2.taxcatg#c.earnings "Earnings $\times$ GN_TI" 1.firstloss "Firstloss" 1.bigloss "Bigloss" 1.divdum "Divdum" 1.divstop "Divstop" 1.negspiw "Negspiw" 1.negnop "Negnop" 1.negglis "Negglis" 1.negglcf "Negglcf")
-	order(earnings 1.taxcatg 2.taxcatg 1.taxcatg#c.earnings 2.taxcatg#c.earnings d_va c.earnings#c.d_va ln_va c.earnings#c.ln_va dta_ratio c.earnings#c.dta_ratio) mtitles("Dhaliwal" "\$\Delta\$VA" "ln(VA)" "\%VA")
+	substitute("\_" "_")
 ;
 #delimit cr
 
 
-** earnings peristence: PROFIT FIRMS
-reghdfe F1_earnings c.earnings##(i.taxcatg) $controls if loss == 0, absorb(fyear sic_group) cluster(gvkey fyear)
+*** define controls for regressions
+global controls c.cashflow c.d_earnings i.negspiw i.negnop i.negglis i.negglcf c.salesgrowth c.age c.rd i.firstloss c.lossseq i.bigloss c.size i.divdum i.divstop
+
+*** regressions
+** earnings persistence: LOSS FIRMS
+reghdfe F1_earnings c.earnings##(i.bn) $controls if loss == 1, absorb(fyear sic_group) cluster(gvkey fyear)
 // matrix list e(b) 
 estimates store model1
-reghdfe F1_earnings c.earnings##(c.d_va) $controls if loss == 0, absorb(fyear sic_group) cluster(gvkey fyear)
+reghdfe F1_earnings c.earnings##(c.dta_ratio) $controls if  loss == 1, absorb(fyear sic_group) cluster(gvkey fyear)
 estimates store model2
-reghdfe F1_earnings c.earnings##(c.ln_va) $controls if loss == 0, absorb(fyear sic_group) cluster(gvkey fyear)
+
+** earnings persistence: PROFIT FIRMS
+reghdfe F1_earnings c.earnings##(i.bn) $controls if loss == 0, absorb(fyear sic_group) cluster(gvkey fyear)
 estimates store model3
 reghdfe F1_earnings c.earnings##(c.dta_ratio) $controls if  loss == 0, absorb(fyear sic_group) cluster(gvkey fyear)
 estimates store model4
 
+
 // estfe model*, labels(fyear "Year FE" sic_group "Industry FE")
 #delimit ;
-esttab model* using "3_pipeline/1_intermediate/results_earnings_persistence_profit_firms.tex",
+esttab model* using "3_pipeline/1_intermediate/results_earnings_persistence.tex",
 	b(3)
 	se(2)
 	indicate(`r(indicate_fe)')
@@ -239,8 +249,7 @@ esttab model* using "3_pipeline/1_intermediate/results_earnings_persistence_prof
 	star(* 0.10 ** 0.05 *** 0.01)
 	label
 	se
-	coeflabel(1.taxcatg "GN_VA" 2.taxcatg "GN_TI" 1.taxcatg#c.earnings "Earnings $\times$ GN_VA" 2.taxcatg#c.earnings "Earnings $\times$ GN_TI" 1.firstloss "Firstloss" 1.bigloss "Bigloss" 1.divdum "Divdum" 1.divstop "Divstop" 1.negspiw "Negspiw" 1.negnop "Negnop" 1.negglis "Negglis" 1.negglcf "Negglcf")
-	order(earnings 1.taxcatg 2.taxcatg 1.taxcatg#c.earnings 2.taxcatg#c.earnings d_va c.earnings#c.d_va ln_va c.earnings#c.ln_va dta_ratio c.earnings#c.dta_ratio) mtitles("Dhaliwal" "\$\Delta\$VA" "ln(VA)" "\%VA")
+	coeflabel(1.bn "BN" 1.bn#c.earnings "Earnings $\times$ BN" 1.firstloss "Firstloss" 1.bigloss "Bigloss" 1.divdum "Divdum" 1.divstop "Divstop" 1.negspiw "Negspiw" 1.negnop "Negnop" 1.negglis "Negglis" 1.negglcf "Negglcf")
+	order(earnings 1.bn 1.bn#c.earnings dta_ratio c.earnings#c.dta_ratio) mtitles("Loss obs." "Loss obs." "Profit obs." "Profit obs.")
 ;
 #delimit cr
-
